@@ -14,7 +14,7 @@ defimpl Scrivener.Paginater, for: Ecto.Query do
         options: options
       }) do
     total_entries =
-      Keyword.get_lazy(options, :total_entries, fn -> total_entries(query, repo, caller) end)
+      Keyword.get_lazy(options, :total_entries, fn -> total_entries(query, repo, caller, options) end)
 
     total_pages = total_pages(total_entries, page_size)
     page_number = min(total_pages, page_number)
@@ -37,7 +37,16 @@ defimpl Scrivener.Paginater, for: Ecto.Query do
     |> repo.all(caller: caller)
   end
 
-  defp total_entries(query, repo, caller) do
+  defp total_entries(query, repo, caller, options) do
+    options |> IO.inspect
+    if Keyword.get(options, :use_estimate_count, false) do
+      total_entries_estimate(query, repo, caller)
+    else
+      total_entries_count(query, repo, caller)
+    end
+  end
+
+  defp total_entries_count(query, repo, caller) do
     total_entries =
       query
       |> exclude(:preload)
@@ -47,6 +56,22 @@ defimpl Scrivener.Paginater, for: Ecto.Query do
       |> repo.one(caller: caller)
 
     total_entries || 0
+  end
+
+  defp total_entries_estimate(query, repo, caller) do
+    total_entries =
+      query
+      |> exclude(:preload)
+      |> exclude(:order_by)
+      |> prepare_select
+      |> count()
+
+    {q, b} = Ecto.Adapters.SQL.to_sql(:all, repo, total_entries)
+
+    case Ecto.Adapters.SQL.query!(repo, "EXPLAIN (FORMAT json) #{q}", b) do
+      %{rows: [[[%{"Plan" => %{"Plans" => [ %{"Plan Rows" => rows} | _]}}]]]} -> rows
+      _ -> 0
+    end
   end
 
   defp prepare_select(
